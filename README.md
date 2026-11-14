@@ -11,26 +11,28 @@ To prove the setup works, I wrote a simple index.html file and served it with Py
 Outcome: a page served publicly through the load balancer while the servers stay isolated from the internet.
 
 ---
-What is a VPC?
+
+## What is a VPC?
 
 A Virtual Private Cloud (VPC) is your own isolated network inside AWS. You pick its IP range, divide it into subnets, and control which traffic may enter or leave. Every AWS account gets a default VPC for getting started, but real projects should use a custom VPC like this one, so the network layout and security rules are chosen on purpose.
 
-![VPC Components Used in This Project]
+## VPC Components Used in This Project
 
-VPC -	Isolated network for all resources, with DNS hostnames and DNS resolution enabled
-Subnets -	4 in total across us-east-1a and us-east-1b: 2 public (load balancer, bastion, NAT gateways) and 2 private (web servers)
-Internet Gateway	- Connects the public subnets to the internet
-NAT Gateways + Elastic IPs	- Let private instances make outbound requests without being reachable from the internet
-Route Tables	- Public table routes to the Internet Gateway; private tables route to the NAT gateways
-Security Group (aws-prod)	- Instance-level firewall allowing ports 22, 80, and 8000
-Launch Template -	Blueprint for the servers: Ubuntu AMI, t2.micro, key pair, security group
-Auto Scaling Group	- Launches and maintains 2 instances across the private subnets
-Bastion Host	- EC2 instance in a public subnet used to SSH into the private instances
-Target Group	- Sends requests to the private instances on port 8000, with HTTP health checks
-Application Load Balancer	- Receives public traffic on port 80 and forwards it to the target group
+- **VPC:** isolated network for all resources, with DNS hostnames and DNS resolution enabled
+- **Subnets:** 4 in total across us-east-1a and us-east-1b: 2 public (load balancer, bastion, NAT gateways) and 2 private (web servers)
+- **Internet Gateway:** connects the public subnets to the internet
+- **NAT Gateways + Elastic IPs:** let private instances make outbound requests without being reachable from the internet
+- **Route Tables:** the public table routes to the Internet Gateway; private tables route to the NAT gateways
+- **Security Group (`aws-prod`):** instance-level firewall allowing ports 22, 80, and 8000
+- **Launch Template:** blueprint for the servers: Ubuntu AMI, `t2.micro`, key pair, security group
+- **Auto Scaling Group:** launches and maintains 2 instances across the private subnets
+- **Bastion Host:** EC2 instance in a public subnet used to SSH into the private instances
+- **Target Group:** sends requests to the private instances on port 8000, with HTTP health checks
+- **Application Load Balancer:** receives public traffic on port 80 and forwards it to the target group
 
-## 🏗️ Architecture Overview
+## Architecture
 
+```text
                         [ Internet Users ]
                                 │
                                 ▼
@@ -52,39 +54,37 @@ Application Load Balancer	- Receives public traffic on port 80 and forwards it t
 │                       │                       │                       │
 │  • EC2 App Instance   │◄── Auto Scaling ─────►│  • EC2 App Instance   │
 └───────────────────────┘       Group           └───────────────────────┘
+```
 
+**Traffic flow:** User → Internet → Application Load Balancer (public subnets) → Target Group (port 8000) → EC2 web servers (private subnets).
 
-Traffic flow: User → Internet → Application Load Balancer (public subnets) → Target Group (port 8000) → EC2 web servers (private subnets). Admin access: Admin → SSH → Bastion host (public subnet) → SSH → private EC2 instance.
+**Admin access:** Admin → SSH → Bastion host (public subnet) → SSH → private EC2 instance.
 
-![Implementation]
+## Implementation
 
-Step 1: Create the VPC with "VPC and more"
+### Step 1: Create the VPC with "VPC and more"
 
-In the VPC console, choose Create VPC → VPC and more and configured:
+In the VPC console, chose **Create VPC → VPC and more** and configured:
 
-2 Availability Zones
-2 public subnets and 2 private subnets (4 subnets in total, across us-east-1a and us-east-1b)
-NAT gateways with Elastic IPs for the private subnets
-No IPv6
-S3 VPC endpoint set to None
+- 2 Availability Zones
+- 2 public subnets and 2 private subnets (4 subnets in total, across us-east-1a and us-east-1b)
+- NAT gateways with Elastic IPs for the private subnets
+- No IPv6
+- S3 VPC endpoint set to Non
 
-The creation workflow finished with Success: VPC, subnets, Internet Gateway, route tables, Elastic IPs, and NAT gateways were all created.
+The creation workflow finished with Success : VPC, subnets, Internet Gateway, route tables, Elastic IPs, and NAT gateways were all created.
 
 VPC workflow success
 ![VPC workflow success](screenshots/01-vpc-created.png)
 
-Step 2: Create the security group and EC2 launch template
+### Step 2: Create the security group and EC2 launch template
 
-Created the aws-prod security group. The final inbound rules are:
+Created the `aws-prod` security group with these inbound rules:
 
-Port	Protocol	Purpose
-22	SSH	Access to the bastion and, from it, the private instances
-80	HTTP	Load balancer listener
-8000	Custom TCP	Port where the Python web server runs on the private instances (added later, see Troubleshooting)
+- **Port 22 (SSH):** access to the bastion and, from it, the private instances
+- **Port 80 (HTTP):** load balancer listener
+- **Port 8000 (Custom TCP):** port where the Python web server runs on the private instances
 
-I did not enable port 8000 at first. The screenshot below shows the rules after I added it.
-
-Security group inbound rules
 
 Note: SSH is open to 0.0.0.0/0 for this demo. In production, restrict it to a specific IP or to the bastion only.
 
@@ -94,87 +94,90 @@ Launch template
 
 ![Security group inbound rules](screenshots/03-security-group-inbound-rules.png)
 
-Step 3: Create the Auto Scaling Group
+### Step 3: Create the Auto Scaling Group
 
-Created an Auto Scaling Group from the launch template, selected the new VPC, and placed the instances in the private subnets, with desired and minimum capacity of 2. The group launched 2 private instances automatically.
+Created an **Auto Scaling Group** from the launch template, selected the new VPC, and placed the instances in the **private subnets**, with desired and minimum capacity of 2. The group launched 2 private instances automatically.
 
-Auto Scaling group
 
-Step 4: Launch the bastion host
 
-Launched an EC2 instance named bastion-host in a public subnet, with a public IP and SSH access. Together with the 2 instances from the Auto Scaling Group, the account shows 3 running instances, all with 2/2 status checks passed.
+### Step 4: Launch the bastion host
 
-EC2 instances running
+Launched an EC2 instance named **bastion-host** in a public subnet, with a public IP and SSH access. Together with the 2 instances from the Auto Scaling Group, the account shows 3 running instances, all with 2/2 status checks passed.
+
 
 ![EC2 instances running](screenshots/02-ec2-instances.png)
 
-Step 5: Reach the private instance and create the web page
+### Step 5: Reach the private instance and create the web page
 
-Copied the .pem key file to the bastion host using scp:
 
-bash
+Copied the `.pem` key file to the bastion host using `scp`:
+
+```bash
 scp -i <key.pem> <key.pem> ubuntu@<bastion-public-ip>:/home/ubuntu/
+```
 
 Then SSH'd into the bastion, and from the bastion SSH'd into the private instance using its private IP:
 
-bash
+```bash
 chmod 400 <key.pem>
 ssh -i <key.pem> ubuntu@<private-instance-ip>
+```
 
 On the private instance, created the page and started the web server:
 
-bash
+```bash
 vi index.html            # write a simple HTML page
 python3 -m http.server 8000
+```
 
-Writing index.html and starting the server on port 8000 (the terminal shows the private IP 10.0.136.244):
+Writing `index.html` and starting the server on port 8000 (the terminal shows the private IP `10.0.136.244`):
 
-Creating index.html and starting the Python server
 
-After the load balancer was in place, the server logs showed GET / 200 responses, which confirms the private instance is serving the page without a public IP.
-
-SSH into the private instance and server logs
+After the load balancer was in place, the server logs showed `GET / 200` responses, which confirms the private instance is serving the page without a public IP.
 
 ![SSH into the private instance and server logs](screenshots/04-ssh-private-instance-http-server.png)
 
-Step 6: Create the target group and Application Load Balancer
+### Step 6: Create the target group and Application Load Balancer
 
 Created the target group aws-prod-example (HTTP, port 8000, target type Instance) with HTTP health checks, and registered the private instances.
 
 Target group
-
-Then created an internet-facing Application Load Balancer aws-prod-example. In the wizard, I selected the VPC and the public subnets (the screenshot shows the us-east-1a public subnet, 10.0.0.0/20, whose route table points to the Internet Gateway), then chose the security group and attached the target group on listener port 80.
+Created the target group `aws-prod-example` (HTTP, port 8000, target type Instance) with HTTP health checks, and registered the private instances.
 ![Target group](screenshots/05-target-group.png)
+Then created an internet-facing **Application Load Balancer** `aws-prod-example`. In the wizard, I selected the VPC and the **public** subnets (the screenshot shows the us-east-1a public subnet, `10.0.0.0/20`, whose route table points to the Internet Gateway), then chose the security group and attached the target group on listener port 80.
+
 Create Application Load Balancer wizard
 
-Note: the wizard starts with the default security group selected. I replaced it with aws-prod, and selected the public subnet in both AZs (us-east-1a and us-east-1b). The finished load balancer below confirms both.
+> Note: the wizard starts with the `default` security group selected. I replaced it with `aws-prod`, and selected the public subnet in both AZs (us-east-1a and us-east-1b). The finished load balancer below confirms both.
 
-Its state is Active.
+Its state is **Active**.
 
-Load balancer active across two AZs
+
 ![Load balancer active across two AZs](screenshots/06-load-balancer.png)
 
 
+### Step 7: Verify the result
 
-Step 7: Verify the result
 
 Copied the load balancer's DNS name into the browser. The page I wrote in index.html loaded successfully, served from the private subnet.
 
 ![Final output in the browser](screenshots/07-final-output.png)
 
 
-![Key Takeaways]
-A VPC with "VPC and more" creates the subnets, gateways, and route tables in one go, across two AZs for availability
-Private instances have no public IP, so a bastion host is the controlled way in for SSH
-A NAT gateway gives private instances outbound internet access without exposing them
-An Auto Scaling Group with a launch template keeps the desired number of servers running
-An ALB and target group route public traffic to the private servers
+## Key Takeaways
+
+- A VPC with "VPC and more" creates the subnets, gateways, and route tables in one go, across two AZs for availability
+- Private instances have no public IP, so a **bastion host** is the controlled way in for SSH
+- A **NAT gateway** gives private instances outbound internet access without exposing them
+- An **Auto Scaling Group** with a launch template keeps the desired number of servers running
+- An **ALB and target group** route public traffic to the private servers
 
 ![Architecture diagram](screenshots/00-architecture.png)
 
-![Clean Up]
+## Clean Up
 
 To avoid charges, delete the load balancer, target group, Auto Scaling Group, launch template, bastion host, and NAT gateways, release the Elastic IPs, and then delete the VPC.
+
 
 
 
